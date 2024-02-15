@@ -1,0 +1,85 @@
+# %%
+import twstock
+import pandas as pd
+from twstock import analytics
+import matplotlib.pyplot as plt
+import numpy as np
+import mplfinance as mf
+
+# %%
+STOCK_CODE = '00757'
+stock = twstock.Stock(STOCK_CODE)
+print(stock.sid)
+data = stock.fetch_from(2014, 5)
+print(data)
+
+# %%
+UP = 1
+DOWN = 0
+GAP = 0
+FALL = 0
+SURGE = 1
+BUY = 1
+SELL = 0
+ROUND = 3
+DIFF = 0.95
+
+name_attribute = ['Date', 'Capacity', 'Turnover', 'Open', 'High', 'Low', 'Close', 'Change', 'Transaction']
+df = pd.DataFrame(columns= name_attribute, data = data,)
+df.set_index(df.columns[0], inplace=True)
+df.to_csv('date.csv')
+
+# %%
+weekly_price = df.resample('W-FRI').agg(
+	{'Open'  :'first',
+     'High'  :'max',
+     'Low'   :'min',
+     'Close' :'last',
+    })
+weekly_price = weekly_price.dropna()
+
+weekly_price['MA5'] = weekly_price['Close'].rolling(5).mean().round(ROUND)
+weekly_price['MA20'] = weekly_price['Close'].rolling(20).mean().round(ROUND)
+weekly_price['diff'] = weekly_price['MA20'].diff().round(ROUND)
+weekly_price = weekly_price.dropna()
+weekly_price.to_csv('week2.csv')
+
+
+weekly_price.loc[weekly_price['diff'] < 0 , ['20WK']] = DOWN
+weekly_price.loc[weekly_price['diff'] > 0 , ['20WK']] = UP
+weekly_price['gap'] = 1
+jump_condition = weekly_price['High'].le(weekly_price['Low'].shift(1))
+weekly_price.loc[jump_condition, 'gap'] = GAP
+fall_condition = weekly_price['Close'].le(weekly_price['MA5'] * DIFF)
+weekly_price.loc[fall_condition, '5WK'] = FALL
+surge_condition = weekly_price['Close'].gt(weekly_price['MA5'])
+weekly_price.loc[surge_condition, '5WK'] = SURGE
+weekly_price.to_csv('week2.csv')
+
+
+holding_stock = 0
+accumulated_ratio = 1
+linear_ratio = 0
+for date, row in weekly_price.iterrows():
+	if holding_stock:
+		if (a:=(row['20WK'] == DOWN)) or (b:=(row['5WK'] == FALL)) or (c:=(row['gap'] == GAP)):
+			current_price = row['Close']
+			price_difference = current_price - holding_stock
+			ratio_difference = current_price / holding_stock
+			accumulated_ratio *= ratio_difference
+			linear_ratio += ratio_difference - 1
+			holding_stock = 0
+			print(date, 'Sell', row['Close'], '因為: {}{}{} 損益: {} %'.format('20週線向下' if a else '',
+												    '跌破5週線' if b else '',
+												    '跳空' if c else '',
+													 ((ratio_difference - 1) * 100).round(2)))
+	else:
+		if row['20WK'] == UP and row['5WK'] == SURGE:
+			current_price = row['Close']
+			holding_stock = current_price
+			print(date, 'buy', current_price)
+print(f'總投報率(本利再投): {((accumulated_ratio - 1) * 100).round(2)} %')
+print(f'總投報率(固定本金): {(linear_ratio * 100).round(2)} %')
+
+
+
